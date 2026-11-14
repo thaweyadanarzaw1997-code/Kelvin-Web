@@ -64,7 +64,7 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
-// 2. Excel Sync (Smart Duplicate Check: Skip existing IDs/Names, add new ones without prices)
+// 2. Excel Sync (Smart Duplicate Check)
 app.post('/api/admin/sync-excel', async (req, res) => {
   try {
     const { newItems } = req.body;
@@ -132,7 +132,7 @@ app.post('/api/admin/sync-excel', async (req, res) => {
   }
 });
 
-// 3. Upload Image via ImgBB API & Auto-Save Link to Sheet1 Column C
+// 3. Upload or Replace Image via ImgBB API & Overwrite Link in Sheet1 Column C
 app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res) => {
   try {
     const { productId } = req.body;
@@ -149,7 +149,7 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
     const form = new FormData();
     form.append('image', base64Image);
 
-    // Call ImgBB API
+    // Call ImgBB API to get new public URL
     const imgbbRes = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, form, {
       headers: form.getHeaders(),
       maxContentLength: Infinity,
@@ -162,7 +162,7 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
 
     const publicImageUrl = imgbbRes.data.data.url;
 
-    // Save Link to Google Sheets (Sheet1 Column C)
+    // Find Row in Google Sheets
     const auth = getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({
@@ -183,6 +183,7 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
       return res.status(404).json({ error: 'Product ID not found in Sheet1' });
     }
 
+    // Overwrite old image link in Column C with new image link
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_NAME}!C${targetRowIndex}`,
@@ -238,7 +239,7 @@ app.post('/api/admin/update-item', async (req, res) => {
         values: [[
           productId,
           currentRow[1] || '',
-          currentRow[2] || '',
+          currentRow[2] || '', // keep image link as is unless replaced
           price3ml !== undefined && price3ml !== '' ? price3ml : (currentRow[3] || ''),
           price5ml !== undefined && price5ml !== '' ? price5ml : (currentRow[4] || ''),
           price10ml !== undefined && price10ml !== '' ? price10ml : (currentRow[5] || ''),
