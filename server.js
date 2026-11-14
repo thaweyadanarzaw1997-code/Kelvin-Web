@@ -141,7 +141,6 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
       return res.status(400).json({ error: 'Image file and Product ID are required' });
     }
 
-    // Convert buffer to base64 for ImgBB API
     const base64Image = req.file.buffer.toString('base64');
     const form = new FormData();
     form.append('image', base64Image);
@@ -158,7 +157,6 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
 
     const publicImageUrl = imgbbRes.data.data.url;
 
-    // Update Sheet1 Column C (Image)
     const auth = getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({
@@ -251,7 +249,7 @@ app.post('/api/admin/update-item', async (req, res) => {
     res.json({ success: true, message: 'Item updated successfully' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: error.message>> });
+    res.status(500).json({ error: error.message });
   }
 });
 
