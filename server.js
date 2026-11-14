@@ -23,7 +23,6 @@ const getAuthClient = () => {
 
 const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID;
 const SHEET_NAME = 'Sheet1';
-const IMGBB_API_KEY = '6d207e0211833d76e73c8800642eaeb9'; // ImgBB API Key
 
 // 1. Get All Items from Sheet1
 app.get('/api/items', async (req, res) => {
@@ -65,7 +64,7 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
-// 2. Excel Sync (Smart Duplicate Check)
+// 2. Excel Sync (Smart Duplicate Check: Skip existing IDs/Names, add new ones without prices)
 app.post('/api/admin/sync-excel', async (req, res) => {
   try {
     const { newItems } = req.body;
@@ -133,30 +132,37 @@ app.post('/api/admin/sync-excel', async (req, res) => {
   }
 });
 
-// 3. Upload Image via Backend & Auto-Save Link to Sheet1 Column C
+// 3. Upload Image via ImgBB API & Auto-Save Link to Sheet1 Column C
 app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res) => {
   try {
     const { productId } = req.body;
+    const apiKey = process.env.IMGBB_API_KEY;
+
     if (!req.file || !productId) {
       return res.status(400).json({ error: 'Image file and Product ID are required' });
+    }
+    if (!apiKey) {
+      return res.status(500).json({ error: 'IMGBB_API_KEY is not configured in Vercel environment variables' });
     }
 
     const base64Image = req.file.buffer.toString('base64');
     const form = new FormData();
     form.append('image', base64Image);
 
-    const imgbbRes = await axios.post(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, form, {
+    // Call ImgBB API
+    const imgbbRes = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, form, {
       headers: form.getHeaders(),
       maxContentLength: Infinity,
       maxBodyLength: Infinity
     });
 
     if (!imgbbRes.data || !imgbbRes.data.success) {
-      throw new Error('ImgBB upload failed');
+      throw new Error('ImgBB upload rejected');
     }
 
     const publicImageUrl = imgbbRes.data.data.url;
 
+    // Save Link to Google Sheets (Sheet1 Column C)
     const auth = getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({
@@ -188,8 +194,8 @@ app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res
 
     res.json({ success: true, imageUrl: publicImageUrl, productId });
   } catch (error) {
-    console.error('Upload Error:', error.response?.data || error.message);
-    res.status(500).json({ error: error.message });
+    console.error('ImgBB Upload Error:', error.response?.data || error.message);
+    res.status(500).json({ error: error.response?.data?.error?.message || error.message });
   }
 });
 
