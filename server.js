@@ -1,11 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+const axios = require('axios');
+const FormData = require('form-data');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const getAuthClient = () => {
   return new google.auth.GoogleAuth({
@@ -19,6 +23,7 @@ const getAuthClient = () => {
 
 const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID;
 const SHEET_NAME = 'Sheet1';
+const IMGBB_API_KEY = '6d207e0211833d76e73c8800642eaeb9'; // ImgBB API Key
 
 // 1. Get All Items from Sheet1
 app.get('/api/items', async (req, res) => {
@@ -60,7 +65,7 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
-// 2. Excel Sync (Smart Duplicate Check: Skip existing Product IDs/Names, Add new ones without prices)
+// 2. Excel Sync (Smart Duplicate Check)
 app.post('/api/admin/sync-excel', async (req, res) => {
   try {
     const { newItems } = req.body;
@@ -103,11 +108,7 @@ app.post('/api/admin/sync-excel', async (req, res) => {
           pid,
           pname,
           item.imageUrl || '',
-          '',
-          '',
-          '',
-          '',
-          '',
+          '', '', '', '', '',
           item.category || 'Unisex',
           item.type || 'Designer',
           item.description || '',
@@ -132,10 +133,72 @@ app.post('/api/admin/sync-excel', async (req, res) => {
   }
 });
 
-// 3. Update Item (Prices, Details, and Image URL)
+// 3. Upload Image via Backend & Auto-Save Link to Sheet1 Column C
+app.post('/api/admin/upload-item-image', upload.single('image'), async (req, res) => {
+  try {
+    const { productId } = req.body;
+    if (!req.file || !productId) {
+      return res.status(400).json({ error: 'Image file and Product ID are required' });
+    }
+
+    // Convert buffer to base64 for ImgBB API
+    const base64Image = req.file.buffer.toString('base64');
+    const form = new FormData();
+    form.append('image', base64Image);
+
+    const imgbbRes = await axios.post(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, form, {
+      headers: form.getHeaders(),
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    if (!imgbbRes.data || !imgbbRes.data.success) {
+      throw new Error('ImgBB upload failed');
+    }
+
+    const publicImageUrl = imgbbRes.data.data.url;
+
+    // Update Sheet1 Column C (Image)
+    const auth = getAuthClient();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:A`,
+    });
+
+    const rows = response.data.values || [];
+    let targetRowIndex = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] && String(rows[i][0]).trim().toLowerCase() === String(productId).trim().toLowerCase()) {
+        targetRowIndex = i + 1;
+        break;
+      }
+    }
+
+    if (targetRowIndex === -1) {
+      return res.status(404).json({ error: 'Product ID not found in Sheet1' });
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!C${targetRowIndex}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[publicImageUrl]]
+      }
+    });
+
+    res.json({ success: true, imageUrl: publicImageUrl, productId });
+  } catch (error) {
+    console.error('Upload Error:', error.response?.data || error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 4. Update Prices & Details in Sheet1
 app.post('/api/admin/update-item', async (req, res) => {
   try {
-    const { productId, productName, imageUrl, price3ml, price5ml, price10ml, price30ml, price100ml, category, type, description, status } = req.body;
+    const { productId, price3ml, price5ml, price10ml, price30ml, price100ml, category, type, description, status } = req.body;
     
     const auth = getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
@@ -162,7 +225,6 @@ app.post('/api/admin/update-item', async (req, res) => {
       range: `${SHEET_NAME}!A${rowIndex}:L${rowIndex}`,
     });
     const currentRow = currentRowRes.data.values ? currentRowRes.data.values[0] : [];
-    const finalImageUrl = imageUrl !== undefined ? imageUrl : (currentRow[2] || '');
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
@@ -171,8 +233,8 @@ app.post('/api/admin/update-item', async (req, res) => {
       requestBody: {
         values: [[
           productId,
-          productName || currentRow[1] || '',
-          finalImageUrl,
+          currentRow[1] || '',
+          currentRow[2] || '',
           price3ml !== undefined && price3ml !== '' ? price3ml : (currentRow[3] || ''),
           price5ml !== undefined && price5ml !== '' ? price5ml : (currentRow[4] || ''),
           price10ml !== undefined && price10ml !== '' ? price10ml : (currentRow[5] || ''),
@@ -189,7 +251,7 @@ app.post('/api/admin/update-item', async (req, res) => {
     res.json({ success: true, message: 'Item updated successfully' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message>> });
   }
 });
 
